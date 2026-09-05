@@ -78,57 +78,64 @@ const SKILL_CATEGORIES = [
 const SOFT_SKILLS = ["Communication", "Leadership", "Teamwork", "Problem Solving", "Presentation Skills", "Time Management"];
 
 // ─── Mock APIs (replace with real backend when connected) ────────────────────
-const mockAuthApi = {
-  sendOtp: (mobile) => new Promise((resolve, reject) => {
-    setTimeout(() => {
-      if (!/^\d{10}$/.test(mobile)) return reject(new Error("Enter a valid 10-digit mobile number"));
-      resolve({ success: true, message: `OTP sent to +91 ${mobile}` });
-    }, 900);
-  }),
-  verifyOtp: (mobile, otp) => new Promise((resolve, reject) => {
-    setTimeout(() => {
-      if (otp.length !== 6) return reject(new Error("Enter the 6-digit OTP"));
-      resolve({ success: true, token: "mock-jwt-token", role: "trainee" });
-    }, 900);
-  }),
-  loginWithPassword: (email, password, role) => new Promise((resolve, reject) => {
-    setTimeout(() => {
-      if (!email || !password) return reject(new Error("Email and password are required"));
-      resolve({ success: true, token: "mock-jwt-token", role });
-    }, 900);
-  }),
-  signup: (data) => new Promise((resolve, reject) => {
-    setTimeout(() => {
-      if (!data.fullName || !data.mobile || !data.email || !data.password) return reject(new Error("Please fill all required fields"));
-      if (data.password !== data.confirmPassword) return reject(new Error("Passwords do not match"));
-      resolve({ success: true, userId: "USR" + Math.floor(Math.random() * 100000) });
-    }, 900);
-  }),
-  guestLogin: () => new Promise((resolve) => {
-    setTimeout(() => resolve({ success: true, token: "mock-guest-token", role: "trainee", guest: true }), 500);
-  }),
+import axios from "axios";
+
+const API_URL = `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api`;
+
+const authApi = {
+  sendOtp: async (mobile) => {
+    const response = await axios.post(
+      `${API_URL}/auth/send-otp`,
+      { mobile }
+    );
+    return response.data;
+  },
+
+  verifyOtp: async (mobile, otp) => {
+    const response = await axios.post(
+      `${API_URL}/auth/verify-otp`,
+      { mobile, otp }
+    );
+    return response.data;
+  },
+
+  loginWithPassword: async (email, password, role) => {
+    const response = await axios.post(
+      `${API_URL}/auth/login`,
+      {
+        email,
+        password,
+        role
+      }
+    );
+    return response.data;
+  },
+
+  signup: async (data) => {
+    const response = await axios.post(
+      `${API_URL}/auth/signup`,
+      data
+    );
+    return response.data;
+  },
+
+  guestLogin: async () => {
+    const response = await axios.post(
+      `${API_URL}/auth/guest`
+    );
+    return response.data;
+  },
 };
 
 const mockSkillApi = {
-  submitAssessment: (payload) => new Promise((resolve) => {
-    setTimeout(() => {
-      const skillCount = payload.skills.length;
-      const avgRating = skillCount ? payload.skills.reduce((a, s) => a + s.rating, 0) / skillCount : 0;
-      const skillScore = Math.min(100, Math.round(skillCount * 6 + avgRating * 8));
-      const employabilityScore = Math.min(100, Math.round(skillScore * 0.85 + (payload.softSkills.length * 2)));
-      const strong = [...payload.skills].sort((a, b) => b.rating - a.rating).slice(0, 4).map(s => s.name);
-      const allSkills = SKILL_CATEGORIES.flatMap(c => c.skills);
-      const chosen = new Set(payload.skills.map(s => s.name));
-      const missing = allSkills.filter(s => !chosen.has(s)).slice(0, 4);
-      resolve({
-        skillScore,
-        employabilityScore,
-        strongSkills: strong,
-        missingSkills: missing,
-        recommendedPath: missing.slice(0, 3).map(s => `Complete a foundational course in ${s}`),
-      });
-    }, 1200);
-  }),
+  submitAssessment: async (payload) => {
+    const response = await axios.post(
+      `${API_URL}/ai/analyze`,
+      payload
+    );
+
+    return response.data;
+  },
 };
 
 // ─── Mock Data ───────────────────────────────────────────────────────────────
@@ -650,7 +657,12 @@ const AuthPage = ({ setPage, setSession }) => {
     resetMessages(); setLoading(true);
     try {
       const res = await mockAuthApi.loginWithPassword(adminEmail, adminPass, "admin");
-      setSession({ role: "admin", guest: false });
+      setSession({
+        role: "admin",
+        guest: false,
+        token: res.token,
+        user: res.user,
+      });
       setPage("gov-dashboard");
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
@@ -936,8 +948,13 @@ const SignupPage = ({ setPage, setSession }) => {
 
           {otpSent && !mobileVerified && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: C.textSecondary, marginBottom: 10 }}>Enter the 6-digit OTP sent to +91 {mobile}</div>
-              <OTPInput value={otp} onChange={setOtp} />
+              <div style={{ fontSize: 12, color: C.textSecondary, textAlign: "center", marginBottom: 14 }}>
+                Enter the 6-digit OTP sent to +91 {mobile}
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <OTPInput value={otp} onChange={setOtp} />
+              </div>
+              {error && <div style={{ color: C.red, fontSize: 12, marginBottom: 12, textAlign: "center" }}>{error}</div>}
               <button onClick={handleVerifyOtp} disabled={loading} style={{
                 width: "100%", marginTop: 12, background: C.navy, color: "#fff", border: "none",
                 borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: loading ? 0.7 : 1,
@@ -1039,14 +1056,22 @@ const SkillAssessmentForm = ({ setPage, onComplete, allowSkip = true }) => {
 
   const handleSubmit = async () => {
     setSubmitting(true);
-    const payload = {
-      personal,
-      skills: Object.entries(selectedSkills).map(([name, rating]) => ({ name, rating })),
-      softSkills: selectedSoft,
-    };
-    const result = await mockSkillApi.submitAssessment(payload);
-    setSubmitting(false);
-    onComplete(result);
+
+    try {
+      const payload = {
+        personal,
+        skills: Object.entries(selectedSkills).map(([name, rating]) => ({ name, rating })),
+        softSkills: selectedSoft,
+      };
+
+      const result = await mockSkillApi.submitAssessment(payload);
+      onComplete(result);
+    } catch (error) {
+      console.error(error);
+      alert(error.response?.data?.message || "Unable to submit assessment.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const inputStyle = { width: "100%", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", color: C.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" };
