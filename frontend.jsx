@@ -77,30 +77,38 @@ const SKILL_CATEGORIES = [
 
 const SOFT_SKILLS = ["Communication", "Leadership", "Teamwork", "Problem Solving", "Presentation Skills", "Time Management"];
 
-// ─── Mock APIs (replace with real backend when connected) ────────────────────
+// ─── Backend API ─────────────────────────────────────────────────────────────
 import axios from "axios";
 
 const API_URL = `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api`;
 
+const apiClient = axios.create({ baseURL: API_URL });
+
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("kd_token");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
 const authApi = {
   sendOtp: async (mobile) => {
-    const response = await axios.post(
+    const response = await apiClient.post(
       `${API_URL}/auth/send-otp`,
       { mobile }
     );
     return response.data;
   },
 
-  verifyOtp: async (mobile, otp) => {
-    const response = await axios.post(
+  verifyOtp: async (mobile, otp, createUser = true) => {
+    const response = await apiClient.post(
       `${API_URL}/auth/verify-otp`,
-      { mobile, otp }
+      { mobile, otp, createUser }
     );
     return response.data;
   },
 
   loginWithPassword: async (email, password, role) => {
-    const response = await axios.post(
+    const response = await apiClient.post(
       `${API_URL}/auth/login`,
       {
         email,
@@ -112,7 +120,7 @@ const authApi = {
   },
 
   signup: async (data) => {
-    const response = await axios.post(
+    const response = await apiClient.post(
       `${API_URL}/auth/signup`,
       data
     );
@@ -120,16 +128,16 @@ const authApi = {
   },
 
   guestLogin: async () => {
-    const response = await axios.post(
+    const response = await apiClient.post(
       `${API_URL}/auth/guest`
     );
     return response.data;
   },
 };
 
-const mockSkillApi = {
+const skillApi = {
   submitAssessment: async (payload) => {
-    const response = await axios.post(
+    const response = await apiClient.post(
       `${API_URL}/ai/analyze`,
       payload
     );
@@ -656,7 +664,8 @@ const AuthPage = ({ setPage, setSession }) => {
   const handleAdminLogin = async () => {
     resetMessages(); setLoading(true);
     try {
-      const res = await mockAuthApi.loginWithPassword(adminEmail, adminPass, "admin");
+      const res = await authApi.loginWithPassword(adminEmail, adminPass, "admin");
+      localStorage.setItem("kd_token", res.token);
       setSession({
         role: "admin",
         guest: false,
@@ -670,7 +679,7 @@ const AuthPage = ({ setPage, setSession }) => {
   const handleSendOtp = async () => {
     resetMessages(); setLoading(true);
     try {
-      await mockAuthApi.sendOtp(mobile);
+      await authApi.sendOtp(mobile);
       setOtpSent(true);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
@@ -678,8 +687,9 @@ const AuthPage = ({ setPage, setSession }) => {
   const handleVerifyOtp = async () => {
     resetMessages(); setLoading(true);
     try {
-      await mockAuthApi.verifyOtp(mobile, otp);
-      setSession({ role: "trainee", guest: false });
+      const res = await authApi.verifyOtp(mobile, otp);
+      localStorage.setItem("kd_token", res.token);
+      setSession({ role: "trainee", guest: false, token: res.token });
       setPage("skill-assessment");
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
@@ -687,8 +697,9 @@ const AuthPage = ({ setPage, setSession }) => {
   const handleTraineePasswordLogin = async () => {
     resetMessages(); setLoading(true);
     try {
-      await mockAuthApi.loginWithPassword(email, pass, "trainee");
-      setSession({ role: "trainee", guest: false });
+      const res = await authApi.loginWithPassword(email, pass, "trainee");
+      localStorage.setItem("kd_token", res.token);
+      setSession({ role: "trainee", guest: false, token: res.token });
       setPage("skill-assessment");
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
@@ -696,8 +707,9 @@ const AuthPage = ({ setPage, setSession }) => {
   const handleGuestLogin = async () => {
     resetMessages(); setLoading(true);
     try {
-      await mockAuthApi.guestLogin();
-      setSession({ role: "trainee", guest: true });
+      const res = await authApi.guestLogin();
+      localStorage.setItem("kd_token", res.token);
+      setSession({ role: "trainee", guest: true, token: res.token });
       setPage("guest-onboarding");
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
@@ -892,13 +904,16 @@ const SignupPage = ({ setPage, setSession }) => {
 
   const handleSendOtp = async () => {
     setError(""); setLoading(true);
-    try { await mockAuthApi.sendOtp(mobile); setOtpSent(true); }
+    try { await authApi.sendOtp(mobile); setOtpSent(true); }
     catch (e) { setError(e.message); } finally { setLoading(false); }
   };
 
   const handleVerifyOtp = async () => {
     setError(""); setLoading(true);
-    try { await mockAuthApi.verifyOtp(mobile, otp); setMobileVerified(true); }
+    try {
+      await authApi.verifyOtp(mobile, otp, false);
+      setMobileVerified(true);
+    }
     catch (e) { setError(e.message); } finally { setLoading(false); }
   };
 
@@ -907,8 +922,9 @@ const SignupPage = ({ setPage, setSession }) => {
     if (!mobileVerified) { setError("Please verify your mobile number first"); return; }
     setLoading(true);
     try {
-      await mockAuthApi.signup({ fullName, mobile, email, password, confirmPassword });
-      setSession({ role: "trainee", guest: false });
+      const res = await authApi.signup({ fullName, mobile, email, password, confirmPassword });
+      localStorage.setItem("kd_token", res.token);
+      setSession({ role: "trainee", guest: false, token: res.token });
       setPage("skill-assessment");
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
@@ -1064,7 +1080,7 @@ const SkillAssessmentForm = ({ setPage, onComplete, allowSkip = true }) => {
         softSkills: selectedSoft,
       };
 
-      const result = await mockSkillApi.submitAssessment(payload);
+      const result = await skillApi.submitAssessment(payload);
       onComplete(result);
     } catch (error) {
       console.error(error);

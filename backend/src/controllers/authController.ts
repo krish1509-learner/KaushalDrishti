@@ -34,7 +34,8 @@ export const signup = async (req: Request, res: Response): Promise<void> => {
       }
     });
 
-    res.status(201).json({ success: true, userId: user.id });
+    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
+    res.status(201).json({ success: true, userId: user.id, token, role: user.role });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Internal server error' });
@@ -95,7 +96,7 @@ export const sendOtp = async (req: Request, res: Response): Promise<void> => {
 
 export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { mobile, otp } = req.body;
+    const { mobile, otp, createUser = true } = req.body;
 
     const tokenRecord = await prisma.verificationToken.findUnique({
       where: { mobile }
@@ -106,9 +107,9 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // OTP is valid. Find or create user
+    // OTP is valid. OTP login may create a lightweight trainee account.
     let user = await prisma.user.findUnique({ where: { mobile } });
-    if (!user) {
+    if (!user && createUser) {
       user = await prisma.user.create({
         data: {
           fullName: 'New User',
@@ -121,6 +122,11 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
 
     // Delete used OTP
     await prisma.verificationToken.delete({ where: { mobile } });
+
+    if (!user) {
+      res.status(200).json({ success: true, verified: true });
+      return;
+    }
 
     const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
     res.status(200).json({ success: true, token, role: user.role });
